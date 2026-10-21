@@ -1,0 +1,1 @@
+Audio generated with Resemble AI Chatterbox Multilingual 0.1.7, on CPU, using its official Italian it_m1.flac reference. Language: it. Seed: 17. Exaggeration: 0.6. CFG: 0.35. Temperature: 0.75. Export: MP3, normalized to -18 LUFS. Source: https://github.com/resemble-ai/chatterbox . Generated 2026-10-21. Text changes require regenerating the corresponding audio.

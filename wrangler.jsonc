@@ -1,0 +1,14 @@
+{
+  "name": "pierhouse-api",
+  "main": "backend/worker.ts",
+  "compatibility_date": "2026-05-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "vars": {"FRONTEND_URL": "https://diobestianegus.github.io/Pierhouse/"},
+  "d1_databases": [{
+    "binding": "DB",
+    "database_name": "pierhouse",
+    "database_id": "8d999f18-f607-41d2-b2c8-3319e009497e"
+  }],
+  "triggers": {"crons": ["0 * * * *"]}
+}

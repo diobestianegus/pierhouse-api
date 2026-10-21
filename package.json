@@ -1,0 +1,36 @@
+{
+  "name": "pierhouse-api",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "backend:dev": "wrangler dev --config backend/wrangler.jsonc",
+    "backend:check": "wrangler deploy --dry-run --config backend/wrangler.jsonc",
+    "backend:deploy": "node scripts/deploy-backend.mjs",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "lucide-react": "^1.31.0",
+    "web-push": "^3.6.7"
+  },
+  "devDependencies": {
+    "vite": "8.0.13",
+    "@vitejs/plugin-react": "6.0.2",
+    "typescript": "5.9.3",
+    "wrangler": "4.92.0",
+    "tailwindcss": "4.2.1",
+    "@tailwindcss/postcss": "4.2.1"
+  },
+  "cloudflare": {
+    "bindings": {
+      "DB": {
+        "description": "Database privato Pierhouse: turni, assenze e registrazioni push. Cloudflare lo crea automaticamente."
+      }
+    }
+  }
+}
