@@ -57,3 +57,18 @@ test('un debito reale compare il mese successivo e il recupero riserva una sola 
  const next=recoverySuggestion(tasks,reserved,map,'Pie','2026-10','2026-10-29');
  assert.notEqual(next?.id,choice.id);
 });
+
+import {correctionDetails} from '../lib/corrections.js';
+
+test('una pulizia di un altro coinquilino può essere corretta senza cambiare proprietario',()=>{
+ const records=[{id:'d-1',kind:'done',name:'Piano cucina',person:'Edo',effort:3}];
+ const result=correctionDetails(records,{recordId:'d-1',person:'Pie',reason:'Doppia registrazione'});
+ assert.equal(result.done.person,'Edo');
+ assert.equal(result.reason,'Doppia registrazione');
+});
+test('la correzione chiede un motivo e rifiuta registrazioni già annullate',()=>{
+ const old=[{id:'d-1',kind:'cancelled_done',name:'Piano cucina',person:'Edo'}];
+ assert.throws(()=>correctionDetails(old,{recordId:'d-1',person:'Pie',reason:'Doppia registrazione'}),/non esiste più/);
+ const active=[{id:'d-1',kind:'done',person:'Edo'}];
+ assert.throws(()=>correctionDetails(active,{recordId:'d-1',person:'Pie',reason:'errore'}),/almeno 8/);
+});
