@@ -1,4 +1,5 @@
 import {spongePhrases,validateSpongePhrase} from '../../lib/sponge-copy.js';
+import {correctionDetails} from '../../lib/corrections.js';
 import {reportDecision,monthlyStats,recoverySuggestion} from '../../lib/fairness.js';
 import {catalog,lottery,people,exchange,taskKey,checklist,lastCompletion,dueDate,extendAssignments,completionTiming,participantsForTask,cycleProgress,earnedPoints,nextOwner} from '../../lib/chores.js';
 export function createDataHandler(env:any){
@@ -39,10 +40,7 @@ async function POST(req:Request){try{const b=await req.json();const r=await rows
 if(!people.includes(b.person))throw Error('Scegli un coinquilino.');
 if(b.kind==='sponge_phrase'){if(b.person!=='Pie')throw Error('Queste impostazioni sono riservate al profilo Pie.');const existing=b.phraseId?spongePhrases(r).find(x=>x.phraseId===b.phraseId):null;if(b.phraseId&&!existing)throw Error('Frase non trovata o già rimossa.');const phraseId=b.phraseId||crypto.randomUUID(),text=b.deleted?existing.text:validateSpongePhrase(b.text),payload={phraseId,text,deleted:b.deleted===true,person:b.person};const old=r.find(x=>x.kind==='sponge_phrase'&&x.phraseId===phraseId);if(old){const{id,kind,created,...previous}=old;const result=await env.DB.prepare('UPDATE records SET payload=?,created=? WHERE id=? AND payload=?').bind(JSON.stringify(payload),Date.now(),id,JSON.stringify(previous)).run();if(!result.meta.changes)throw Error('Frase aggiornata nel frattempo. Riprova.')}else await statement('sponge-phrase:'+phraseId,'sponge_phrase',payload).run();await audit(b.person,b.deleted?'Frase spugna rimossa':existing?'Frase spugna modificata':'Frase spugna aggiunta',text).run();return Response.json({ok:true})}
 if(b.kind==='correct_done'){
- const done=r.find(x=>x.id===b.recordId&&x.kind==='done');
- if(!done)throw Error('Questa registrazione non esiste più o è già stata corretta.');
- const reason=typeof b.reason==='string'?b.reason.trim():'';
- if(reason.length<8||reason.length>300)throw Error('Spiega in almeno 8 caratteri perché la registrazione è sbagliata (massimo 300).');
+ const {done,reason}=correctionDetails(r,b);
  // Correzione per tutti: non sovrascrivere mai i turni successivi degli altri.
  // La registrazione viene marcata come annullata anziché sparire dallo storico del database.
  const changed=await env.DB.prepare("UPDATE records SET kind='cancelled_done' WHERE id=? AND kind='done'").bind(done.id).run();
