@@ -1,4 +1,5 @@
 import {spongePhrases,validateSpongePhrase} from '../../lib/sponge-copy.js';
+import {reportDecision,monthlyStats,recoverySuggestion} from '../../lib/fairness.js';
 import {catalog,lottery,people,exchange,taskKey,checklist,lastCompletion,dueDate,extendAssignments,completionTiming,participantsForTask,cycleProgress,earnedPoints,nextOwner} from '../../lib/chores.js';
 export function createDataHandler(env:any){
 async function rows(){const r=await env.DB.prepare('SELECT * FROM records ORDER BY created DESC').all();return r.results.map((x:any)=>({id:x.id,kind:x.kind,created:x.created,...JSON.parse(x.payload)}))}
@@ -27,7 +28,7 @@ if(b.kind==='shopping_update'){const item=r.find(x=>x.kind==='shopping'&&x.id===
 if(b.kind==='randomize'){
 const present=people.filter(p=>!r.some(a=>a.kind==='absence'&&a.person===p&&a.start<=now&&a.end>=now));if(!present.length)throw Error('Tutti assenti: aggiusta le assenze prima del sorteggio.');
 const next={map:lottery(tasks,present),revision:crypto.randomUUID()};const result=await env.DB.prepare('UPDATE records SET payload=? WHERE id=? AND payload=?').bind(JSON.stringify(next),'assignments',oldPayload).run();if(!result.meta.changes)return Response.json({error:'I turni sono cambiati. Aggiorna e riprova.'},{status:409});await audit(b.person,'Turni rimescolati','Sorteggio tra i coinquilini presenti, rispettando i bagni.').run();return Response.json({ok:true})}
-if(!['task','done','absence','deadline','mess','mess_status'].includes(b.kind))throw Error('Operazione non valida.');
+if(!['task','done','absence','deadline','mess','mess_status','mess_vote','recover_assign'].includes(b.kind))throw Error('Operazione non valida.');
 if(b.kind!=='task'&&!people.includes(b.person))throw Error('Scegli un coinquilino.');
 const validDate=(s:any)=>typeof s==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(s)&&!isNaN(Date.parse(s+'T12:00:00'));
 if(b.kind==='task'&&(!b.name?.trim()||b.name.length>100||!Number.isInteger(b.effort)||b.effort<1||b.effort>5||!Number.isInteger(b.every)||b.every<1||b.every>365||!['days','weeks','months'].includes(b.unit)||!validDate(b.since)||!people.includes(b.assignee)))throw Error('Controlla nome, impegno, frequenza e assegnatario.');
@@ -35,9 +36,44 @@ if(b.kind==='absence'&&(!validDate(b.start)||!validDate(b.end)||b.start>b.end))t
 const id=crypto.randomUUID();delete b.id;delete b.created;
 if(b.kind==='mess'){
 if(![1,2,3].includes(b.severity))throw Error('Scegli un grado di schifosità da 1 a 3.');
-if(!people.includes(b.target)||!validDate(b.date)||b.date>now||typeof b.description!=='string'||b.description.trim().length<5||b.description.trim().length>1000)throw Error('Scegli una persona, una data valida e descrivi il casino (5–1000 caratteri).');
-const payload={person:b.person,target:b.target,severity:b.severity,date:b.date,description:b.description.trim()},statePayload={reportId:id,status:'open',person:b.person,at:Date.now()};
+if(!people.includes(b.target)||b.target===b.person||!validDate(b.date)||b.date>now||typeof b.description!=='string'||b.description.trim().length<5||b.description.trim().length>1000)throw Error('Scegli un altro coinquilino, una data valida e descrivi il casino (5–1000 caratteri).');
+if(!['task','common'].includes(b.category||'common'))throw Error('Categoria non valida.');
+const linkedTask=b.category==='task'?tasks.find(t=>taskKey(t)===b.taskId):null;
+if(b.category==='task'&&!linkedTask)throw Error('Scegli la pulizia contestata.');
+if(r.some(x=>x.kind==='mess'&&x.person===b.person&&x.target===b.target&&x.date===b.date&&x.description===b.description.trim()&&x.kind!=='withdrawn'))throw Error('Questa segnalazione esiste già.');
+const payload={person:b.person,target:b.target,severity:b.severity,date:b.date,description:b.description.trim(),category:b.category||'common',taskId:linkedTask?taskKey(linkedTask):null,taskName:linkedTask?.name||null},statePayload={reportId:id,status:'open',person:b.person,at:Date.now()};
 await env.DB.batch([statement(id,'mess',payload),statement('mess-state:'+id,'mess_status',statePayload)]);return Response.json({id})}
+if(b.kind==='mess_vote'){
+ const report=r.find(x=>x.kind==='mess'&&x.id===b.reportId),status=r.find(x=>x.kind==='mess_status'&&x.reportId===b.reportId)?.status||'open';
+ if(!report||status!=='open'||reportDecision(r,report)!=='pending')throw Error('La votazione è già chiusa o non disponibile.');
+ if(b.person===report.person||b.person===report.target||typeof b.approve!=='boolean')throw Error('Può votare solo chi non è coinvolto nella segnalazione.');
+ const id='mess-vote:'+report.id+':'+b.person,payload={reportId:report.id,person:b.person,approve:b.approve,at:Date.now()};
+ const existing=r.find(x=>x.id===id);
+ if(existing){
+  const old={reportId:existing.reportId,person:existing.person,approve:existing.approve,at:existing.at};
+  const change=await env.DB.prepare('UPDATE records SET payload=?,created=? WHERE id=? AND payload=?').bind(JSON.stringify(payload),Date.now(),id,JSON.stringify(old)).run();
+  if(!change.meta.changes)throw Error('Votazione modificata nel frattempo. Riprova.');
+ }else await statement(id,'mess_vote',payload).run();
+ await audit(b.person,b.approve?'Segnalazione confermata':'Segnalazione respinta',report.target+' · '+report.description.slice(0,90)).run();
+ return Response.json({ok:true});
+}
+if(b.kind==='recover_assign'){
+ const month=now.slice(0,7),due=monthlyStats(r,month,now).find(x=>x.name===b.person);
+ if(!due||due.recovery<=0)throw Error('Nessun recupero da assegnare per questo mese.');
+ if(r.some(x=>x.kind==='recovery_assignment'&&x.person===b.person&&x.month===month))throw Error('Hai già preso in carico una pulizia di recupero questo mese.');
+ if(b.expectedRevision!==state.revision)return Response.json({error:'Turni aggiornati: riapri il recupero.'},{status:409});
+ const selected=recoverySuggestion(tasks,r,state.map,b.person,month,now);
+ if(!selected||taskKey(selected)!==b.taskId)throw Error('La pulizia di recupero è cambiata: aggiorna la pagina.');
+ const oldOwner=state.map[taskKey(selected)];
+ const next={map:{...state.map,[taskKey(selected)]:b.person},revision:crypto.randomUUID()};
+ const result=await env.DB.batch([
+  env.DB.prepare('UPDATE records SET payload=? WHERE id=? AND payload=?').bind(JSON.stringify(next),'assignments',oldPayload),
+  env.DB.prepare('INSERT INTO records(id,kind,payload,created) SELECT ?,?,?,? WHERE EXISTS(SELECT 1 FROM records WHERE id=? AND payload=?)').bind('recovery:'+month+':'+b.person,'recovery_assignment',JSON.stringify({person:b.person,month,taskId:taskKey(selected),name:selected.name,effort:selected.effort,previous:oldOwner}),Date.now(),'assignments',JSON.stringify(next))
+ ]);
+ if(!result[0].meta.changes)throw Error('Turni aggiornati: riprova.');
+ await audit(b.person,'Recupero preso in carico',selected.name+' · '+selected.effort+' punti, dal precedente assegnatario '+oldOwner).run();
+ return Response.json({ok:true,taskId:taskKey(selected)});
+}
 if(b.kind==='mess_status'){
 const report=r.find(x=>x.kind==='mess'&&x.id===b.reportId),current=r.find(x=>x.kind==='mess_status'&&x.reportId===b.reportId);
 if(!report||!['open','resolved','withdrawn'].includes(b.status))throw Error('Segnalazione o stato non valido.');
