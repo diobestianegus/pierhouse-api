@@ -16,7 +16,25 @@ const data={map:lottery(tasks,present.length?present:people),revision:crypto.ran
 await env.DB.prepare('INSERT OR IGNORE INTO records(id,kind,payload,created) VALUES(?,?,?,?)').bind('assignments','assignments',JSON.stringify(data),Date.now()).run();
 return (await rows()).find(r=>r.kind==='assignments')
 }
-async function GET(){try{const r=await rows();await assignment(r);return Response.json(await rows(),{headers:{'Cache-Control':'no-store'}})}catch{return Response.json({error:'Dati non disponibili. Riprova.'},{status:500})}}
+async function scheduleRecoveries(){
+ const now=new Date().toLocaleDateString('sv-SE',{timeZone:'Europe/Rome'}),month=now.slice(0,7);
+ const initial=await rows(),goals=monthlyStats(initial,month,now);
+ for(const goal of goals.filter(x=>x.recovery>0)){
+  const current=await rows(),state=current.find(r=>r.kind==='assignments');
+  if(!state||current.some(r=>r.kind==='recovery_assignment'&&r.person===goal.name&&r.month===month))continue;
+  const tasks=catalog(current),suggested=recoverySuggestion(tasks,current,state.map,goal.name,month,now);
+  if(!suggested)continue;
+  const id='recovery:'+month+':'+goal.name,oldPayload=JSON.stringify({map:state.map,revision:state.revision});
+  const next={map:{...state.map,[taskKey(suggested)]:goal.name},revision:crypto.randomUUID()};
+  const payload={person:goal.name,month,taskId:taskKey(suggested),name:suggested.name,effort:suggested.effort,previous:state.map[taskKey(suggested)]};
+  const result=await env.DB.batch([
+   env.DB.prepare('UPDATE records SET payload=? WHERE id=? AND payload=?').bind(JSON.stringify(next),'assignments',oldPayload),
+   env.DB.prepare('INSERT OR IGNORE INTO records(id,kind,payload,created) SELECT ?,?,?,? WHERE EXISTS(SELECT 1 FROM records WHERE id=? AND payload=?)').bind(id,'recovery_assignment',JSON.stringify(payload),Date.now(),'assignments',JSON.stringify(next))
+  ]);
+  if(result[0].meta.changes)await audit(goal.name,'Recupero assegnato automaticamente',suggested.name+' · '+suggested.effort+' punti da recuperare').run();
+ }
+}
+async function GET(){try{const r=await rows();await assignment(r);await scheduleRecoveries();return Response.json(await rows(),{headers:{'Cache-Control':'no-store'}})}catch{return Response.json({error:'Dati non disponibili. Riprova.'},{status:500})}}
 async function POST(req:Request){try{const b=await req.json();const r=await rows(),state=await assignment(r);const oldPayload=JSON.stringify({map:state.map,revision:state.revision});const tasks=catalog(r);const now=new Date().toLocaleDateString('sv-SE',{timeZone:'Europe/Rome'});
 if(!people.includes(b.person))throw Error('Scegli un coinquilino.');
 if(b.kind==='sponge_phrase'){if(b.person!=='Pie')throw Error('Queste impostazioni sono riservate al profilo Pie.');const existing=b.phraseId?spongePhrases(r).find(x=>x.phraseId===b.phraseId):null;if(b.phraseId&&!existing)throw Error('Frase non trovata o già rimossa.');const phraseId=b.phraseId||crypto.randomUUID(),text=b.deleted?existing.text:validateSpongePhrase(b.text),payload={phraseId,text,deleted:b.deleted===true,person:b.person};const old=r.find(x=>x.kind==='sponge_phrase'&&x.phraseId===phraseId);if(old){const{id,kind,created,...previous}=old;const result=await env.DB.prepare('UPDATE records SET payload=?,created=? WHERE id=? AND payload=?').bind(JSON.stringify(payload),Date.now(),id,JSON.stringify(previous)).run();if(!result.meta.changes)throw Error('Frase aggiornata nel frattempo. Riprova.')}else await statement('sponge-phrase:'+phraseId,'sponge_phrase',payload).run();await audit(b.person,b.deleted?'Frase spugna rimossa':existing?'Frase spugna modificata':'Frase spugna aggiunta',text).run();return Response.json({ok:true})}
