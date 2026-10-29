@@ -58,7 +58,7 @@ if(!people.includes(b.target)||b.target===b.person||!validDate(b.date)||b.date>n
 if(!['task','common'].includes(b.category||'common'))throw Error('Categoria non valida.');
 const linkedTask=b.category==='task'?tasks.find(t=>taskKey(t)===b.taskId):null;
 if(b.category==='task'&&!linkedTask)throw Error('Scegli la pulizia contestata.');
-if(r.some(x=>x.kind==='mess'&&x.person===b.person&&x.target===b.target&&x.date===b.date&&x.description===b.description.trim()&&x.kind!=='withdrawn'))throw Error('Questa segnalazione esiste già.');
+if(r.some(x=>x.kind==='mess'&&x.person===b.person&&x.target===b.target&&x.date===b.date&&x.description===b.description.trim()&&reportDecision(r,x)!=='withdrawn'))throw Error('Questa segnalazione esiste già.');
 const payload={person:b.person,target:b.target,severity:b.severity,date:b.date,description:b.description.trim(),category:b.category||'common',taskId:linkedTask?taskKey(linkedTask):null,taskName:linkedTask?.name||null},statePayload={reportId:id,status:'open',person:b.person,at:Date.now()};
 await env.DB.batch([statement(id,'mess',payload),statement('mess-state:'+id,'mess_status',statePayload)]);return Response.json({id})}
 if(b.kind==='mess_vote'){
@@ -96,6 +96,7 @@ if(b.kind==='mess_status'){
 const report=r.find(x=>x.kind==='mess'&&x.id===b.reportId),current=r.find(x=>x.kind==='mess_status'&&x.reportId===b.reportId);
 if(!report||!['open','resolved','withdrawn'].includes(b.status))throw Error('Segnalazione o stato non valido.');
 if((b.status==='withdrawn'||current?.status==='withdrawn')&&b.person!==report.person)throw Error('Solo chi ha scritto la segnalazione può ritirarla o riaprirla dopo il ritiro.');
+if(b.status==='resolved'&&b.person===report.target)throw Error('La persona segnalata non può chiudere da sola la segnalazione: serve la conferma di un altro coinquilino.');
 if(current?.status!==b.expectedStatus)return Response.json({error:'La segnalazione è stata aggiornata. Riprova.'},{status:409});
 const payload={reportId:b.reportId,status:b.status,person:b.person,at:Date.now()};
 const changed=await env.DB.prepare('UPDATE records SET payload=?,created=? WHERE id=? AND payload=?').bind(JSON.stringify(payload),Date.now(),'mess-state:'+b.reportId,JSON.stringify({reportId:current.reportId,status:current.status,person:current.person,at:current.at})).run();
